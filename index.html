@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>생산 현황 보드</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+  :root { --steel:#16222c; --yellow:#f5b800; --ok:#16a34a; --warn:#f59e0b; --bad:#dc2626; --miss:#e8590c; --hit:#0f766e; }
+  body { font-family:'Noto Sans KR','Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif; background:#e9edf0; color:#16222c; font-size:14px; }
+  .num { font-variant-numeric:tabular-nums; }
+  .card { background:#fff; border-radius:8px; box-shadow:0 1px 0 #d5dbe0; }
+  .lamp { width:11px; height:11px; border-radius:50%; background:#cbd5e1; flex:none; }
+  .inp { width:4.5rem; border:1px solid #cbd5e1; border-radius:6px; padding:3px 6px; text-align:right; background:#fff; }
+  .dinp { border:1px solid #cbd5e1; border-radius:6px; padding:3px 6px; background:#fff; }
+  .tab { padding:4px 12px; border-radius:6px; font-size:13px; color:#64748b; }
+  .tab.on { background:var(--steel); color:#fff; font-weight:700; }
+  #drop.over { border-color:var(--yellow); background:#fff8e1; }
+  tbody tr:hover td { background:#fffbeb; }
+  .chip { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+</style>
+</head>
+<body>
+<div id="report">
+
+  <header style="background:var(--steel)" class="text-white">
+    <div class="max-w-6xl mx-auto px-5 py-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-xl font-black tracking-tight">생산 현황 보드</h1>
+        <p id="meta" class="text-xs text-slate-400 mt-1">엑셀 파일을 올리면 자동으로 집계됩니다</p>
+      </div>
+      <div class="flex gap-2" data-html2canvas-ignore="true">
+        <button id="sampleBtn" class="px-3 py-1.5 text-sm rounded-md border border-slate-600 text-slate-200 hover:bg-slate-700">샘플 보기</button>
+        <button id="pdfBtn" class="px-3 py-1.5 text-sm font-bold rounded-md text-slate-900 hover:brightness-95 disabled:opacity-30 disabled:cursor-not-allowed" style="background:var(--yellow)" disabled>PDF 다운로드</button>
+      </div>
+    </div>
+    <div style="height:5px;background:repeating-linear-gradient(-45deg,var(--yellow) 0 10px,var(--steel) 10px 20px)"></div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-5 py-5">
+    <div data-html2canvas-ignore="true">
+      <label id="drop" for="file" class="flex items-center justify-center gap-3 cursor-pointer rounded-lg border-2 border-dashed border-slate-400/60 py-3 mb-3 text-slate-600 hover:border-slate-500 transition-colors">
+        <input id="file" type="file" accept=".xlsx,.xls,.csv" class="hidden">
+        <span>엑셀 파일을 끌어다 놓거나 <b class="underline underline-offset-2">파일 선택</b></span>
+        <span class="text-xs text-slate-400 hidden sm:inline">.xlsx .xls .csv</span>
+      </label>
+      <p id="msg" class="hidden rounded-md px-3 py-2 mb-3 bg-amber-100 text-amber-900"></p>
+
+      <div class="card px-4 py-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-slate-600">
+        <span class="font-bold text-slate-800">조회 기간</span>
+        <span class="flex items-center gap-1.5"><input id="dFrom" type="date" class="dinp"> ~ <input id="dTo" type="date" class="dinp"></span>
+        <span class="font-bold text-slate-800 sm:ml-4">관리 기준</span>
+        <label class="flex items-center gap-1.5">달성률 <input id="tRate" type="number" step="1" value="100" class="inp">% 이상</label>
+        <label class="flex items-center gap-1.5">불량률 <input id="tDef" type="number" step="0.1" value="1" class="inp">% 이하</label>
+        <label class="flex items-center gap-1.5">비가동 <input id="tDown" type="number" step="5" value="60" class="inp">분/일 미만</label>
+      </div>
+    </div>
+
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div class="card p-4">
+        <p class="font-medium text-slate-500">계획량</p>
+        <p id="kPlan" class="num text-3xl font-black tracking-tight mt-1.5">-</p>
+        <p id="kDays" class="text-xs text-slate-400 mt-2">&nbsp;</p>
+      </div>
+      <div class="card p-4">
+        <p class="font-medium text-slate-500">실적량</p>
+        <p id="kAct" class="num text-3xl font-black tracking-tight mt-1.5">-</p>
+        <p id="kGap" class="text-xs text-slate-400 mt-2">&nbsp;</p>
+      </div>
+      <div class="card p-4">
+        <div class="flex items-center justify-between"><p class="font-medium text-slate-500">달성률</p><span class="flex items-center gap-1.5 text-xs font-bold"><i id="rLamp" class="lamp"></i><span id="rTxt" class="text-slate-400">-</span></span></div>
+        <p id="kRate" class="num text-3xl font-black tracking-tight mt-1.5">-</p>
+        <div class="h-1.5 rounded-full bg-slate-100 mt-3 overflow-hidden"><div id="kBar" class="h-full rounded-full transition-all duration-500" style="width:0%"></div></div>
+      </div>
+      <div class="card p-4">
+        <div class="flex items-center justify-between"><p class="font-medium text-slate-500">불량률</p><span class="flex items-center gap-1.5 text-xs font-bold"><i id="dLamp" class="lamp"></i><span id="dTxt" class="text-slate-400">-</span></span></div>
+        <p id="kDef" class="num text-3xl font-black tracking-tight mt-1.5">-</p>
+        <p id="kDefSub" class="text-xs text-slate-400 mt-2">&nbsp;</p>
+      </div>
+    </section>
+
+    <section class="card p-4 mb-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <h2 class="font-bold">일자별 추이</h2>
+        <div id="tabs" class="flex gap-1" data-html2canvas-ignore="true"></div>
+      </div>
+      <div id="legend" class="flex flex-wrap items-center gap-4 text-xs text-slate-500 mb-2"></div>
+      <div class="relative h-64"><canvas id="chart"></canvas></div>
+    </section>
+
+    <section class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2"><h2 class="font-bold">확인 필요 일자</h2><span id="exCount" class="text-xs text-slate-500"></span></div>
+      <div id="exList" class="text-slate-400">데이터를 불러오면 관리 기준을 벗어난 일자가 표시됩니다.</div>
+    </section>
+
+    <section class="card p-4">
+      <div class="flex items-center justify-between mb-2"><h2 class="font-bold">데이터</h2><span class="text-xs text-slate-400">회색 헤더는 자동 계산 열 · 마지막 행은 합계/평균</span></div>
+      <div class="overflow-x-auto">
+        <table class="w-full">
+          <thead id="thead"></thead>
+          <tbody id="tbody"><tr><td class="py-8 text-center text-slate-400">업로드된 데이터가 없습니다</td></tr></tbody>
+          <tfoot id="tfoot"></tfoot>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = { ok:'#16a34a', warn:'#f59e0b', bad:'#dc2626' }, LABEL = { ok:'정상', warn:'주의', bad:'경고' };
+const S = { metric:'prod' };
+let chart = null, fileName = '';
+
+const store = {
+  get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+};
+['tRate', 'tDef', 'tDown'].forEach(id => { $(id).value = store.get(id, $(id).value); $(id).addEventListener('input', () => { store.set(id, $(id).value); draw(); }); });
+['dFrom', 'dTo'].forEach(id => $(id).addEventListener('change', draw));
+
+const toNum = v => { if (typeof v === 'number') return v; const n = parseFloat(String(v ?? '').replace(/[,%\s]/g, '')); return isNaN(n) ? 0 : n; };
+const fmt = n => Math.round(n).toLocaleString('ko-KR');
+const sum = a => a.reduce((s, v) => s + v, 0);
+const findCol = (h, re, not) => h.findIndex(x => re.test(String(x)) && !(not && not.test(String(x))));
+const showMsg = t => { $('msg').textContent = t; $('msg').classList.toggle('hidden', !t); };
+function lamp(p, st) {
+  $(p + 'Lamp').style.background = COLORS[st]; $(p + 'Lamp').style.boxShadow = `0 0 0 4px ${COLORS[st]}26`;
+  $(p + 'Txt').textContent = LABEL[st]; $(p + 'Txt').style.color = COLORS[st];
+}
+
+function load(display, raw, name) {
+  if (display.length < 2) return showMsg('데이터가 비어 있습니다. 첫 행에 제목, 둘째 행부터 데이터가 있어야 합니다.');
+  const keep = r => r.some(c => String(c ?? '').trim() !== '');
+  S.headers = display[0].map(h => String(h ?? '').trim());
+  S.rows = display.slice(1).filter(keep); S.raw = raw.slice(1).filter(keep);
+  const h = S.headers;
+  S.c = {
+    date: findCol(h, /일자|날짜|일시|date/i), plan: findCol(h, /계획|plan/i),
+    act: findCol(h, /실적|생산량|생산수량|actual/i, /계획/),
+    defQty: findCol(h, /불량|부적합|defect/i, /률|율|rate/i), defRate: findCol(h, /불량률|불량율|defect.?rate/i),
+    down: findCol(h, /비가동|다운타임|downtime/i),
+  };
+  const c = S.c, miss = [];
+  if (c.act < 0) miss.push('실적량'); if (c.plan < 0) miss.push('계획량');
+  showMsg(miss.length ? `제목 행에서 [${miss.join(', ')}] 열을 찾지 못했습니다. 열 이름에 "계획", "실적" 같은 단어가 포함되어 있는지 확인하세요.` : '');
+  S.labels = S.rows.map((r, i) => c.date >= 0 ? String(r[c.date]) : `${i + 1}행`);
+  S.iso = c.date >= 0 && S.labels.every(l => /^\d{4}-\d{2}-\d{2}$/.test(l));
+  S.defFrac = c.defRate >= 0 && Math.max(...S.raw.map(r => toNum(r[c.defRate]))) <= 1;
+  S.unit = ((h[c.down] || '').match(/\(([^)]+)\)/) || [])[1] || '분';
+  $('dFrom').disabled = $('dTo').disabled = !S.iso;
+  $('dFrom').value = S.iso ? [...S.labels].sort()[0] : ''; $('dTo').value = S.iso ? [...S.labels].sort().pop() : '';
+  fileName = name; $('pdfBtn').disabled = false;
+  draw();
+}
+
+function draw() {
+  if (!S.rows) return;
+  const c = S.c, H = S.headers;
+  const RATE_OK = +$('tRate').value || 100, RATE_WARN = RATE_OK - 5, DEF_OK = +$('tDef').value || 1, DEF_WARN = DEF_OK * 2, DOWN = +$('tDown').value || 60;
+  const from = $('dFrom').value, to = $('dTo').value;
+  let idx = S.rows.map((_, i) => i);
+  if (S.iso) idx = idx.filter(i => (!from || S.labels[i] >= from) && (!to || S.labels[i] <= to));
+  if (!idx.length) return showMsg('선택한 기간에 데이터가 없습니다.');
+  if ($('msg').textContent === '선택한 기간에 데이터가 없습니다.') showMsg('');
+
+  const L = idx.map(i => S.labels[i]), R = idx.map(i => S.rows[i]), W = idx.map(i => S.raw[i]);
+  const col = k => W.map(r => c[k] >= 0 ? toNum(r[c[k]]) : 0);
+  const plan = col('plan'), act = col('act'), qty = col('defQty'), down = col('down');
+  const hasPlan = c.plan >= 0 && c.act >= 0, hasDef = c.defQty >= 0 || c.defRate >= 0, hasDown = c.down >= 0;
+  const rateRow = act.map((a, i) => plan[i] > 0 ? a / plan[i] * 100 : 0);
+  const defRow = c.defQty >= 0 ? act.map((a, i) => a > 0 ? qty[i] / a * 100 : 0) : col('defRate').map(v => S.defFrac ? v * 100 : v);
+  const totPlan = sum(plan), totAct = sum(act);
+  const defAll = !hasDef ? null : c.defQty >= 0 ? (totAct > 0 ? sum(qty) / totAct * 100 : 0) : sum(defRow) / defRow.length;
+  const rateAll = totPlan > 0 ? totAct / totPlan * 100 : null;
+
+  // KPI
+  $('kPlan').textContent = c.plan >= 0 ? fmt(totPlan) : '-'; $('kAct').textContent = c.act >= 0 ? fmt(totAct) : '-';
+  $('kDays').textContent = `${L.length}일 합계`;
+  if (hasPlan) { const g = totAct - totPlan; $('kGap').textContent = `계획 대비 ${g >= 0 ? '+' : ''}${fmt(g)}`; $('kGap').style.color = g >= 0 ? COLORS.ok : COLORS.bad; }
+  if (rateAll !== null) {
+    const st = rateAll >= RATE_OK ? 'ok' : rateAll >= RATE_WARN ? 'warn' : 'bad';
+    $('kRate').textContent = rateAll.toFixed(1) + '%'; lamp('r', st);
+    $('kBar').style.width = Math.min(100, rateAll) + '%'; $('kBar').style.background = COLORS[st];
+  }
+  if (defAll !== null) {
+    const st = defAll <= DEF_OK ? 'ok' : defAll <= DEF_WARN ? 'warn' : 'bad';
+    $('kDef').textContent = defAll.toFixed(2) + '%'; lamp('d', st);
+    $('kDefSub').textContent = c.defQty >= 0 ? `불량 ${fmt(sum(qty))}개 · 기준 ${DEF_OK}% 이하` : `기준 ${DEF_OK}% 이하`;
+  }
+
+  // 확인 필요 일자
+  const ex = [];
+  L.forEach((d, i) => {
+    const t = [];
+    if (hasPlan && rateRow[i] < RATE_OK) t.push(['miss', `달성률 ${rateRow[i].toFixed(1)}%`]);
+    if (hasDef && defRow[i] > DEF_OK) t.push(['bad', `불량률 ${defRow[i].toFixed(2)}%`]);
+    if (hasDown && down[i] >= DOWN) t.push(['warn', `비가동 ${fmt(down[i])}${S.unit}`]);
+    if (t.length) ex.push({ d, t });
+  });
+  ex.sort((a, b) => b.t.length - a.t.length);
+  const chipC = { miss:'background:#fff3ea;color:#e8590c', bad:'background:#fef0f0;color:#dc2626', warn:'background:#fff8e1;color:#a16207' };
+  $('exCount').textContent = `${ex.length}일 / ${L.length}일`;
+  $('exList').innerHTML = !ex.length ? '<p class="text-slate-500">관리 기준을 벗어난 일자가 없습니다.</p>' :
+    '<div class="grid sm:grid-cols-2 gap-x-6">' + ex.slice(0, 10).map(e => `<div class="flex items-center gap-2 py-1.5 border-b border-slate-100"><span class="num font-bold w-24 text-slate-700 flex-none">${e.d}</span><span class="flex flex-wrap gap-1">${e.t.map(([k, s]) => `<span class="chip" style="${chipC[k]}">${s}</span>`).join('')}</span></div>`).join('') + '</div>' +
+    (ex.length > 10 ? `<p class="text-xs text-slate-400 mt-2">외 ${ex.length - 10}일 (아래 표에서 확인)</p>` : '');
+
+  // 차트 (탭으로 전환)
+  const tabs = [['prod', '생산량', c.act >= 0], ['def', '불량률', hasDef], ['down', '비가동시간', hasDown]].filter(t => t[2]);
+  if (!tabs.some(t => t[0] === S.metric)) S.metric = tabs[0] ? tabs[0][0] : 'prod';
+  $('tabs').innerHTML = tabs.map(t => `<button class="tab ${t[0] === S.metric ? 'on' : ''}" data-m="${t[0]}">${t[1]}</button>`).join('');
+  $('tabs').querySelectorAll('button').forEach(b => b.onclick = () => { S.metric = b.dataset.m; draw(); });
+  const sq = (c, t) => `<span class="flex items-center gap-1.5"><i class="w-3 h-3 rounded-sm" style="background:${c}"></i>${t}</span>`;
+  const ln = t => `<span class="flex items-center gap-1.5"><i class="w-4 border-t-2 border-dashed border-slate-500"></i>${t}</span>`;
+  let ds, leg, fmtY = v => v.toLocaleString('ko-KR');
+  if (S.metric === 'def') {
+    ds = [{ type:'bar', label:'불량률(%)', data:defRow.map(v => +v.toFixed(2)), backgroundColor:defRow.map(v => v > DEF_OK ? '#dc2626' : '#0f766e'), borderRadius:3, maxBarThickness:30, order:2 },
+          { type:'line', label:'기준', data:L.map(() => DEF_OK), borderColor:'#475569', borderDash:[6, 4], borderWidth:1.5, pointRadius:0, order:1 }];
+    leg = sq('#0f766e', '기준 이내') + sq('#dc2626', '기준 초과') + ln(`기준 ${DEF_OK}%`); fmtY = v => v + '%';
+  } else if (S.metric === 'down') {
+    ds = [{ type:'bar', label:`비가동(${S.unit})`, data:down, backgroundColor:down.map(v => v >= DOWN ? '#f59e0b' : '#64748b'), borderRadius:3, maxBarThickness:30, order:2 },
+          { type:'line', label:'기준', data:L.map(() => DOWN), borderColor:'#475569', borderDash:[6, 4], borderWidth:1.5, pointRadius:0, order:1 }];
+    leg = sq('#64748b', '기준 미만') + sq('#f59e0b', '기준 이상') + ln(`기준 ${DOWN}${S.unit}`);
+  } else {
+    ds = [{ type:'bar', label:'실적량', data:act, backgroundColor:act.map((v, i) => hasPlan && v < plan[i] ? '#e8590c' : '#0f766e'), borderRadius:3, maxBarThickness:30, order:2 }];
+    if (c.plan >= 0) ds.push({ type:'line', label:'계획량', data:plan, borderColor:'#475569', borderDash:[6, 4], borderWidth:1.5, pointRadius:0, order:1 });
+    leg = sq('#0f766e', '계획 달성') + sq('#e8590c', '계획 미달') + (c.plan >= 0 ? ln('계획량') : '');
+  }
+  $('legend').innerHTML = leg;
+  if (chart) chart.destroy();
+  chart = new Chart($('chart'), {
+    data: { labels: L, datasets: ds },
+    options: { responsive:true, maintainAspectRatio:false, animation:{ duration:400 }, plugins:{ legend:{ display:false } },
+      scales:{ y:{ beginAtZero:true, border:{ display:false }, grid:{ color:'#edf0f2' }, ticks:{ color:'#64748b', callback:fmtY } }, x:{ grid:{ display:false }, ticks:{ color:'#64748b' } } } }
+  });
+
+  // 테이블 (원본 + 계산 열 + 합계/평균)
+  const calc = [];
+  if (hasPlan) calc.push('달성률(%)');
+  if (c.defQty >= 0 && c.defRate < 0) calc.push('불량률(%)');
+  const th = (t, calcd) => `<th class="text-left px-3 py-2 text-xs font-bold whitespace-nowrap text-white" style="background:${calcd ? '#64748b' : 'var(--steel)'}">${t}</th>`;
+  $('thead').innerHTML = '<tr>' + H.map(t => th(t)).join('') + calc.map(t => th(t, true)).join('') + '</tr>';
+  const td = (v, st = '') => `<td class="num px-3 py-2 border-b border-slate-100 whitespace-nowrap" style="${st}">${v}</td>`;
+  $('tbody').innerHTML = R.map((r, ri) => '<tr>' + H.map((_, i) => {
+    let st = '';
+    if (i === c.act && hasPlan && act[ri] < plan[ri]) st = 'color:var(--miss);font-weight:700;background:#fff3ea';
+    if ((i === c.defRate || (i === c.defQty && c.defRate < 0)) && hasDef && defRow[ri] > DEF_OK) st = 'color:var(--bad);font-weight:700;background:#fef0f0';
+    if (i === c.down && down[ri] >= DOWN) st = 'color:#a16207;font-weight:700;background:#fff8e1';
+    return td(r[i] ?? '', st);
+  }).join('') + calc.map(t => t.startsWith('달성')
+      ? td(rateRow[ri].toFixed(1), rateRow[ri] < RATE_OK ? 'color:var(--miss);font-weight:700' : '')
+      : td(defRow[ri].toFixed(2), defRow[ri] > DEF_OK ? 'color:var(--bad);font-weight:700' : '')).join('') + '</tr>').join('');
+  const fcell = v => td(v, 'font-weight:700;background:#f1f5f9');
+  $('tfoot').innerHTML = '<tr>' + H.map((_, i) =>
+    fcell(i === (c.date >= 0 ? c.date : 0) ? '합계/평균' : i === c.plan ? fmt(totPlan) : i === c.act ? fmt(totAct) : i === c.defQty ? fmt(sum(qty)) : i === c.down ? fmt(sum(down)) : i === c.defRate && defAll !== null ? defAll.toFixed(2) : '')
+  ).join('') + calc.map(t => fcell(t.startsWith('달성') ? (rateAll ?? 0).toFixed(1) : (defAll ?? 0).toFixed(2))).join('') + '</tr>';
+
+  const range = S.iso ? `  |  ${L[0]} ~ ${L[L.length - 1]}` : '';
+  $('meta').textContent = `${fileName}  |  ${L.length}일${range}  |  기준: 달성률 ${RATE_OK}%↑ · 불량률 ${DEF_OK}%↓` + (hasDown ? ` · 비가동 ${DOWN}${S.unit}/일 미만` : '');
+}
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      load(XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', dateNF: 'yyyy-mm-dd' }), XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), file.name);
+    } catch (err) { showMsg('파일을 읽지 못했습니다. 엑셀(.xlsx, .xls) 또는 .csv 파일인지 확인하세요.'); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+$('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+const drop = $('drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+
+$('sampleBtn').addEventListener('click', () => {
+  const rows = [];
+  for (let d = 1; d <= 20; d++) {
+    const act = 840 + Math.round(Math.random() * 200), def = Math.round(act * (0.006 + Math.random() * 0.024));
+    rows.push([`2026-09-${String(d).padStart(2, '0')}`, 1000, act, def, Math.round(Math.random() * 90)]);
+  }
+  const data = [['일자', '계획량', '실적량', '불량수량', '비가동시간(분)'], ...rows];
+  load(data, data, '샘플 데이터');
+});
+
+$('pdfBtn').addEventListener('click', () => {
+  html2pdf().set({
+    margin: 6, filename: `${fileName.replace(/\.[^.]+$/, '') || '생산현황'}_대시보드.pdf`,
+    image: { type: 'jpeg', quality: 0.95 }, html2canvas: { scale: 2, backgroundColor: '#e9edf0' },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }, pagebreak: { mode: ['css', 'legacy'], avoid: 'tr' }
+  }).from($('report')).save();
+});
+</script>
+</body>
+</html>
